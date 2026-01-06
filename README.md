@@ -85,6 +85,43 @@ Open `http://localhost:10000/docs` for interactive Swagger documentation.
 | `WEBHOOK_TIMEOUT` | `10` | Seconds to wait for webhook response |
 | `WEBHOOK_RETRIES` | `3` | Number of webhook retry attempts |
 | `ALLOWED_DOMAINS` | `` | Comma-separated image URL whitelist |
+| `PARALLEL_DOWNLOADS` | `8` | Max concurrent image downloads |
+| `PARALLEL_SCENES` | `4` | Max concurrent scene renders |
+| `FFMPEG_PRESET` | `ultrafast` | Encoding speed (ultrafast/veryfast/fast/medium) |
+| `FFMPEG_CRF` | `28` | Quality level (18=high, 23=default, 28=fast, 35=low) |
+| `DEFAULT_FPS` | `24` | Default frames per second |
+
+## Speed Optimization
+
+The API is optimized for fast rendering on cloud servers (especially Render.com free tier).
+
+### Render Modes
+
+Use the `render_mode` parameter in `/render-video` to control speed vs quality:
+
+| Mode | Preset | CRF | FPS | Speed | Quality | Use Case |
+|------|--------|-----|-----|-------|---------|----------|
+| `fast` | ultrafast | 28 | 24 | ~2-3 min | Good | Default, production |
+| `balanced` | veryfast | 23 | 24 | ~4-5 min | Better | Social media |
+| `quality` | medium | 20 | 30 | ~8-10 min | Best | Final exports |
+
+**Example with render_mode:**
+```json
+{
+  "template_id": "fight_video_standard",
+  "render_mode": "fast",
+  "images": { ... }
+}
+```
+
+### Performance Features
+
+1. **Parallel Image Downloads**: Up to 8 images download simultaneously
+2. **Parallel Scene Rendering**: Up to 4 scenes render in parallel
+3. **Combined Concat+Audio**: Single FFmpeg pass for final assembly
+4. **Ultrafast Preset**: 5-10x faster than default encoding
+5. **CRF 28**: Optimized quality/speed tradeoff
+6. **24 FPS**: Reduced from 30fps (20% less frames to encode)
 
 ## API Authentication
 
