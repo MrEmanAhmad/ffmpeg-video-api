@@ -59,6 +59,13 @@ class FFmpegBuilder:
         self.height = self.settings["height"]
         self.fps = self.settings["fps"]
         self.codec = self.settings.get("codec", "libx264")
+        # Preset: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
+        # ultrafast = fastest encoding, larger file size
+        # medium = default balance
+        self.preset = self.settings.get("preset", "ultrafast")
+        # CRF (Constant Rate Factor): 18=high quality, 23=default, 28=fast, 35=low
+        # Lower = better quality, larger file, slower encoding
+        self.crf = str(self.settings.get("crf", "28"))
     
     def build_split_screen_command(
         self,
@@ -98,6 +105,8 @@ class FFmpegBuilder:
             "-map", "[out]",
             "-t", str(duration),
             "-c:v", self.codec,
+            "-preset", self.preset,
+            "-crf", self.crf,
             "-pix_fmt", "yuv420p",
             "-r", str(self.fps),
             str(output_path)
@@ -149,6 +158,8 @@ class FFmpegBuilder:
             "-vf", vf,
             "-t", str(duration),
             "-c:v", self.codec,
+            "-preset", self.preset,
+            "-crf", self.crf,
             "-pix_fmt", "yuv420p",
             "-r", str(self.fps),
             str(output_path)
@@ -237,11 +248,92 @@ class FFmpegBuilder:
             "-filter_complex", filter_complex,
             "-map", "[outv]",
             "-c:v", self.codec,
+            "-preset", self.preset,
+            "-crf", self.crf,
             "-pix_fmt", "yuv420p",
             str(output_path)
         ]
         
         return cmd
+    
+    def build_concat_with_audio_command(
+        self,
+        input_files: List[Path],
+        audio_path: Path,
+        output_path: Path,
+        video_duration: float,
+        volume: float = 1.0,
+        fade_in: float = 0,
+        fade_out: float = 0,
+        loop_audio: bool = True
+    ) -> tuple:
+        """
+        Build FFmpeg command to concatenate videos AND add audio in a single pass
+        This is faster than separate concat + audio operations
+        
+        Args:
+            input_files: List of video file paths to concatenate
+            audio_path: Path to audio file
+            output_path: Output video path
+            video_duration: Total video duration in seconds
+            volume: Audio volume (0.0 to 2.0)
+            fade_in: Fade in duration in seconds
+            fade_out: Fade out duration in seconds
+            loop_audio: Whether to loop audio to match video length
+            
+        Returns:
+            Tuple of (command list, concat file path)
+        """
+        # Create concat file
+        concat_file = output_path.parent / "concat.txt"
+        
+        with open(concat_file, 'w') as f:
+            for input_file in input_files:
+                f.write(f"file '{input_file.absolute()}'\n")
+        
+        # Build audio filter chain
+        audio_filters = []
+        
+        if volume != 1.0:
+            audio_filters.append(f"volume={volume}")
+        
+        if fade_in > 0:
+            audio_filters.append(f"afade=t=in:st=0:d={fade_in}")
+        
+        if fade_out > 0:
+            fade_out_start = max(0, video_duration - fade_out)
+            audio_filters.append(f"afade=t=out:st={fade_out_start}:d={fade_out}")
+        
+        # Build command
+        cmd = ["ffmpeg", "-y"]
+        
+        # Input: concat demuxer for video
+        cmd.extend(["-f", "concat", "-safe", "0", "-i", str(concat_file)])
+        
+        # Input: audio (with loop if needed)
+        if loop_audio:
+            cmd.extend(["-stream_loop", "-1"])
+        cmd.extend(["-i", str(audio_path)])
+        
+        # Video codec (copy from concatenated segments - no re-encoding!)
+        cmd.extend(["-c:v", "copy"])
+        
+        # Audio codec and filters
+        cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+        
+        if audio_filters:
+            cmd.extend(["-af", ",".join(audio_filters)])
+        
+        # Match video duration
+        cmd.extend(["-t", str(video_duration)])
+        
+        # Shortest to stop when video ends
+        cmd.extend(["-shortest"])
+        
+        # Output
+        cmd.append(str(output_path))
+        
+        return cmd, concat_file
     
     def build_add_audio_command(
         self,

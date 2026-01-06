@@ -32,9 +32,11 @@ DEFAULT_FIGHT_VIDEO_TEMPLATE = {
     "output_settings": {
         "width": 720,
         "height": 1280,
-        "fps": 30,
+        "fps": 24,
         "format": "mp4",
-        "codec": "libx264"
+        "codec": "libx264",
+        "preset": "ultrafast",
+        "crf": "28"
     },
     "audio": {
         "enabled": False,

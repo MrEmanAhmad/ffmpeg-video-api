@@ -31,7 +31,8 @@ from utils.validators import (
     validate_template_structure, 
     validate_render_request,
     validate_audio_settings,
-    validate_webhook_url
+    validate_webhook_url,
+    validate_render_mode
 )
 from utils.ffmpeg_builder import check_ffmpeg_installed, get_ffmpeg_version
 from utils.cleanup import cleanup_old_videos, get_temp_dir_stats
@@ -679,6 +680,11 @@ def render_video():
             webhook_url:
               type: string
               description: HTTPS URL to receive completion notification
+            render_mode:
+              type: string
+              enum: [fast, balanced, quality]
+              description: "Render speed/quality tradeoff. fast=fastest (default), balanced=good quality, quality=best quality but slow"
+              default: fast
     responses:
       202:
         description: Job submitted successfully
@@ -740,6 +746,11 @@ def render_video():
         webhook_url = data.get("webhook_url")
         if webhook_url:
             validate_webhook_url(webhook_url)
+        
+        # Validate render mode if provided
+        render_mode = data.get("render_mode")
+        if render_mode:
+            validate_render_mode(render_mode)
         
         # Check FFmpeg availability
         if not check_ffmpeg_installed():

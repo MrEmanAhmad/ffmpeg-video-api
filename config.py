@@ -39,13 +39,43 @@ AUTH_ENABLED = len(API_KEYS) > 0
 WEBHOOK_TIMEOUT = int(os.getenv("WEBHOOK_TIMEOUT", "10"))  # seconds
 WEBHOOK_RETRIES = int(os.getenv("WEBHOOK_RETRIES", "3"))
 
+# Parallel processing settings (for speed optimization)
+PARALLEL_DOWNLOADS = int(os.getenv("PARALLEL_DOWNLOADS", "8"))  # Max concurrent image downloads
+PARALLEL_SCENES = int(os.getenv("PARALLEL_SCENES", "4"))  # Max concurrent scene rendering
+
+# FFmpeg encoding settings
+FFMPEG_PRESET = os.getenv("FFMPEG_PRESET", "ultrafast")  # ultrafast, superfast, veryfast, faster, fast, medium
+FFMPEG_CRF = os.getenv("FFMPEG_CRF", "28")  # 18=high quality, 23=default, 28=fast, 35=low quality
+DEFAULT_FPS = int(os.getenv("DEFAULT_FPS", "24"))  # 24=cinema standard, 30=smooth
+
+# Render modes presets
+RENDER_MODES = {
+    "fast": {
+        "preset": "ultrafast",
+        "crf": "28",
+        "fps": 24
+    },
+    "balanced": {
+        "preset": "veryfast",
+        "crf": "23",
+        "fps": 24
+    },
+    "quality": {
+        "preset": "medium",
+        "crf": "20",
+        "fps": 30
+    }
+}
+
 # Default video output settings
 DEFAULT_OUTPUT_SETTINGS = {
     "width": 720,
     "height": 1280,
-    "fps": 30,
+    "fps": DEFAULT_FPS,
     "format": "mp4",
-    "codec": "libx264"
+    "codec": "libx264",
+    "preset": FFMPEG_PRESET,
+    "crf": FFMPEG_CRF
 }
 
 # Default audio settings

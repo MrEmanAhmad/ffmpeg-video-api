@@ -329,3 +329,28 @@ def validate_webhook_url(url: str) -> str:
     
     return url
 
+
+def validate_render_mode(mode: str) -> str:
+    """
+    Validate render mode parameter
+    
+    Args:
+        mode: Render mode to validate (fast, balanced, quality)
+        
+    Returns:
+        Validated render mode
+        
+    Raises:
+        ValidationError: If mode is invalid
+    """
+    valid_modes = list(config.RENDER_MODES.keys())
+    
+    if mode and mode not in valid_modes:
+        raise ValidationError(
+            f"Invalid render_mode. Must be one of: {', '.join(valid_modes)}",
+            "INVALID_RENDER_MODE",
+            {"mode": mode, "valid_modes": valid_modes}
+        )
+    
+    return mode or "fast"  # Default to fast
+

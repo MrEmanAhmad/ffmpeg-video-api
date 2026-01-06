@@ -6,8 +6,10 @@ import logging
 import requests
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 import config
 from utils.ffmpeg_builder import FFmpegBuilder, run_ffmpeg_command
 from utils.validators import validate_image_url, ValidationError
@@ -161,7 +163,7 @@ class VideoService:
     
     def download_all_images(self, job: Job, template: dict) -> Dict[str, Dict[str, Path]]:
         """
-        Download all images for a render job
+        Download all images for a render job (PARALLEL for speed)
         
         Args:
             job: The render job
@@ -174,18 +176,11 @@ class VideoService:
         job_dir = self.temp_dir / job.job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         
-        downloaded = {}
-        total_images = sum(
-            len(scene.get("segments", []))
-            for scene in template.get("scenes", [])
-        )
-        downloaded_count = 0
-        
+        # Collect all download tasks
+        download_tasks = []
         for scene in template.get("scenes", []):
             scene_num = scene["scene_number"]
             scene_key = f"scene_{scene_num}"
-            downloaded[scene_key] = {}
-            
             scene_images = images_data.get(scene_key, {})
             
             for segment in scene.get("segments", []):
@@ -201,16 +196,52 @@ class VideoService:
                 # Determine file extension from URL
                 parsed = urlparse(image_url)
                 ext = Path(parsed.path).suffix or ".png"
-                
                 output_path = job_dir / f"{scene_key}_{segment_type}{ext}"
-                self.download_image(image_url, output_path)
-                downloaded[scene_key][segment_type] = output_path
                 
-                # Update progress (downloading is ~30% of work)
-                downloaded_count += 1
-                progress = int((downloaded_count / total_images) * 30)
-                job_queue.update_job_progress(job.job_id, progress)
+                download_tasks.append((scene_key, segment_type, image_url, output_path))
         
+        total_images = len(download_tasks)
+        downloaded = {}
+        downloaded_count = 0
+        download_lock = threading.Lock()
+        errors = []
+        
+        def download_task(task: Tuple[str, str, str, Path]) -> Tuple[str, str, Path]:
+            """Download a single image and return result"""
+            scene_key, segment_type, url, output_path = task
+            try:
+                self.download_image(url, output_path)
+                return (scene_key, segment_type, output_path, None)
+            except VideoServiceError as e:
+                return (scene_key, segment_type, None, e)
+        
+        # Execute downloads in parallel
+        logger.info(f"Downloading {total_images} images in parallel (max {config.PARALLEL_DOWNLOADS} concurrent)")
+        
+        with ThreadPoolExecutor(max_workers=config.PARALLEL_DOWNLOADS) as executor:
+            futures = {executor.submit(download_task, task): task for task in download_tasks}
+            
+            for future in as_completed(futures):
+                scene_key, segment_type, output_path, error = future.result()
+                
+                with download_lock:
+                    if error:
+                        errors.append(error)
+                    else:
+                        if scene_key not in downloaded:
+                            downloaded[scene_key] = {}
+                        downloaded[scene_key][segment_type] = output_path
+                    
+                    # Update progress (downloading is ~20% of work now, faster)
+                    downloaded_count += 1
+                    progress = int((downloaded_count / total_images) * 20)
+                    job_queue.update_job_progress(job.job_id, progress)
+        
+        # Check for errors
+        if errors:
+            raise errors[0]  # Raise first error
+        
+        logger.info(f"All {total_images} images downloaded successfully")
         return downloaded
     
     def render_scene(
@@ -328,7 +359,7 @@ class VideoService:
     
     def render_video(self, job: Job, template: dict) -> Path:
         """
-        Render complete video from template and images
+        Render complete video from template and images (PARALLEL for speed)
         
         Args:
             job: The render job
@@ -340,59 +371,91 @@ class VideoService:
         job_dir = self.temp_dir / job.job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         
-        # Get output settings
-        output_settings = template.get("output_settings", config.DEFAULT_OUTPUT_SETTINGS)
+        # Apply render mode if specified
+        render_mode = job.request_data.get("render_mode", "fast")
+        output_settings = template.get("output_settings", {}).copy()
+        
+        # Merge with default settings
+        for key, value in config.DEFAULT_OUTPUT_SETTINGS.items():
+            if key not in output_settings:
+                output_settings[key] = value
+        
+        # Apply render mode presets
+        if render_mode in config.RENDER_MODES:
+            mode_settings = config.RENDER_MODES[render_mode]
+            output_settings.update(mode_settings)
+            logger.info(f"Using render mode: {render_mode}")
+        
         builder = FFmpegBuilder(output_settings)
         
-        # Download all images
+        # Download all images (parallel)
         logger.info(f"Downloading images for job {job.job_id}")
         downloaded_images = self.download_all_images(job, template)
         
-        # Render each scene
-        all_segment_videos = []
+        # Prepare scene rendering tasks
         scenes = template.get("scenes", [])
         custom_texts = job.request_data.get("custom_text", {})
         
-        for i, scene in enumerate(scenes):
+        # Results storage with ordering
+        scene_results = {}
+        render_lock = threading.Lock()
+        completed_scenes = [0]  # Use list for mutable counter in closure
+        errors = []
+        
+        def render_scene_task(scene: dict) -> Tuple[int, List[Path], Optional[Exception]]:
+            """Render a single scene and return results"""
             scene_num = scene["scene_number"]
             scene_key = f"scene_{scene_num}"
             
-            logger.info(f"Rendering scene {scene_num} for job {job.job_id}")
+            try:
+                logger.info(f"Rendering scene {scene_num} for job {job.job_id}")
+                
+                scene_videos = self.render_scene(
+                    builder=builder,
+                    scene=scene,
+                    images=downloaded_images[scene_key],
+                    output_dir=job_dir,
+                    scene_number=scene_num,
+                    custom_text=custom_texts.get(scene_key)
+                )
+                
+                return (scene_num, scene_videos, None)
+            except Exception as e:
+                return (scene_num, [], e)
+        
+        # Render scenes in parallel
+        max_parallel = min(config.PARALLEL_SCENES, len(scenes))
+        logger.info(f"Rendering {len(scenes)} scenes in parallel (max {max_parallel} concurrent)")
+        
+        with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+            futures = {executor.submit(render_scene_task, scene): scene["scene_number"] for scene in scenes}
             
-            scene_videos = self.render_scene(
-                builder=builder,
-                scene=scene,
-                images=downloaded_images[scene_key],
-                output_dir=job_dir,
-                scene_number=scene_num,
-                custom_text=custom_texts.get(scene_key)
-            )
-            
-            all_segment_videos.extend(scene_videos)
-            
-            # Update progress (rendering is 30-80% of work)
-            progress = 30 + int(((i + 1) / len(scenes)) * 50)
-            job_queue.update_job_progress(job.job_id, progress)
+            for future in as_completed(futures):
+                scene_num, scene_videos, error = future.result()
+                
+                with render_lock:
+                    if error:
+                        errors.append(error)
+                    else:
+                        scene_results[scene_num] = scene_videos
+                    
+                    # Update progress (rendering is 20-75% of work)
+                    completed_scenes[0] += 1
+                    progress = 20 + int((completed_scenes[0] / len(scenes)) * 55)
+                    job_queue.update_job_progress(job.job_id, progress)
         
-        # Concatenate all segments
-        logger.info(f"Concatenating {len(all_segment_videos)} segments for job {job.job_id}")
+        # Check for errors
+        if errors:
+            if isinstance(errors[0], VideoServiceError):
+                raise errors[0]
+            raise VideoServiceError(str(errors[0]), "RENDER_ERROR")
         
-        final_output = job_dir / f"final_{job.job_id}.mp4"
+        # Collect segment videos in correct order
+        all_segment_videos = []
+        for scene_num in sorted(scene_results.keys()):
+            all_segment_videos.extend(scene_results[scene_num])
         
-        # Use simple concat for now (faster)
-        cmd, concat_file = builder.build_concat_command(
-            input_files=all_segment_videos,
-            output_path=final_output
-        )
-        
-        result = run_ffmpeg_command(cmd)
-        if not result["success"]:
-            raise VideoServiceError(
-                f"FFmpeg concat error: {result['error']}",
-                "FFMPEG_ERROR"
-            )
-        
-        job_queue.update_job_progress(job.job_id, 85)
+        logger.info(f"All {len(scenes)} scenes rendered successfully")
         
         # Calculate total duration
         total_duration = sum(
@@ -401,51 +464,70 @@ class VideoService:
             for segment in scene.get("segments", [])
         )
         
-        # Add audio if provided
+        # Check if we have audio to add
         audio_data = job.request_data.get("audio", {})
         audio_url = audio_data.get("url") if isinstance(audio_data, dict) else job.request_data.get("audio_url")
+        audio_path = None
         
+        # Download audio in parallel with concat preparation
         if audio_url:
-            logger.info(f"Adding audio for job {job.job_id}")
-            
-            # Download audio file
+            logger.info(f"Downloading audio for job {job.job_id}")
             parsed = urlparse(audio_url)
             audio_ext = Path(parsed.path).suffix or ".mp3"
             audio_path = job_dir / f"audio{audio_ext}"
             
             try:
                 self.download_audio(audio_url, audio_path)
-                
-                # Get audio settings
-                volume = audio_data.get("volume", 1.0) if isinstance(audio_data, dict) else 1.0
-                fade_in = audio_data.get("fade_in", 0) if isinstance(audio_data, dict) else 0
-                fade_out = audio_data.get("fade_out", 0) if isinstance(audio_data, dict) else 0
-                loop = audio_data.get("loop", True) if isinstance(audio_data, dict) else True
-                
-                final_with_audio = job_dir / f"final_{job.job_id}_audio.mp4"
-                
-                cmd = builder.build_add_audio_command(
-                    video_path=final_output,
-                    audio_path=audio_path,
-                    output_path=final_with_audio,
-                    video_duration=total_duration,
-                    volume=volume,
-                    fade_in=fade_in,
-                    fade_out=fade_out,
-                    loop_audio=loop
-                )
-                
-                result = run_ffmpeg_command(cmd)
-                if result["success"]:
-                    # Replace original with audio version
-                    final_output.unlink()
-                    final_with_audio.rename(final_output)
-                    logger.info(f"Audio added successfully for job {job.job_id}")
-                else:
-                    logger.warning(f"Failed to add audio: {result['error']}")
-                    
             except VideoServiceError as e:
                 logger.warning(f"Failed to download audio: {e.message}")
+                audio_path = None
+        
+        # Concatenate all segments
+        logger.info(f"Concatenating {len(all_segment_videos)} segments for job {job.job_id}")
+        final_output = job_dir / f"final_{job.job_id}.mp4"
+        
+        # Use combined concat + audio if audio is available
+        if audio_path and audio_path.exists():
+            # Get audio settings
+            volume = audio_data.get("volume", 1.0) if isinstance(audio_data, dict) else 1.0
+            fade_in = audio_data.get("fade_in", 0) if isinstance(audio_data, dict) else 0
+            fade_out = audio_data.get("fade_out", 0) if isinstance(audio_data, dict) else 0
+            loop = audio_data.get("loop", True) if isinstance(audio_data, dict) else True
+            
+            # Combined concat + audio command
+            cmd, concat_file = builder.build_concat_with_audio_command(
+                input_files=all_segment_videos,
+                audio_path=audio_path,
+                output_path=final_output,
+                video_duration=total_duration,
+                volume=volume,
+                fade_in=fade_in,
+                fade_out=fade_out,
+                loop_audio=loop
+            )
+            
+            result = run_ffmpeg_command(cmd)
+            if not result["success"]:
+                raise VideoServiceError(
+                    f"FFmpeg concat+audio error: {result['error']}",
+                    "FFMPEG_ERROR"
+                )
+            logger.info(f"Video with audio created for job {job.job_id}")
+        else:
+            # Simple concat without audio
+            cmd, concat_file = builder.build_concat_command(
+                input_files=all_segment_videos,
+                output_path=final_output
+            )
+            
+            result = run_ffmpeg_command(cmd)
+            if not result["success"]:
+                raise VideoServiceError(
+                    f"FFmpeg concat error: {result['error']}",
+                    "FFMPEG_ERROR"
+                )
+        
+        job_queue.update_job_progress(job.job_id, 95)
         
         # Clean up intermediate files
         self.cleanup_intermediate_files(job_dir, final_output)
