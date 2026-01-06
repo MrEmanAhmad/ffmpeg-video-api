@@ -1,0 +1,90 @@
+{
+  "template_id": "fight_video_standard",
+  "template_name": "fight_video_standard",
+  "description": "8 scenes with split screen and winner reveal - standard fight video format",
+  "scenes": [
+    {
+      "scene_number": 1,
+      "segments": [
+        {"type": "split_top", "duration": 3, "position": "top_half"},
+        {"type": "split_bottom", "duration": 3, "position": "bottom_half"},
+        {"type": "full_winner", "duration": 4, "position": "full_screen"}
+      ]
+    },
+    {
+      "scene_number": 2,
+      "segments": [
+        {"type": "split_top", "duration": 3, "position": "top_half"},
+        {"type": "split_bottom", "duration": 3, "position": "bottom_half"},
+        {"type": "full_winner", "duration": 4, "position": "full_screen"}
+      ]
+    },
+    {
+      "scene_number": 3,
+      "segments": [
+        {"type": "split_top", "duration": 3, "position": "top_half"},
+        {"type": "split_bottom", "duration": 3, "position": "bottom_half"},
+        {"type": "full_winner", "duration": 4, "position": "full_screen"}
+      ]
+    },
+    {
+      "scene_number": 4,
+      "segments": [
+        {"type": "split_top", "duration": 3, "position": "top_half"},
+        {"type": "split_bottom", "duration": 3, "position": "bottom_half"},
+        {"type": "full_winner", "duration": 4, "position": "full_screen"}
+      ]
+    },
+    {
+      "scene_number": 5,
+      "segments": [
+        {"type": "split_top", "duration": 3, "position": "top_half"},
+        {"type": "split_bottom", "duration": 3, "position": "bottom_half"},
+        {"type": "full_winner", "duration": 4, "position": "full_screen"}
+      ]
+    },
+    {
+      "scene_number": 6,
+      "segments": [
+        {"type": "split_top", "duration": 3, "position": "top_half"},
+        {"type": "split_bottom", "duration": 3, "position": "bottom_half"},
+        {"type": "full_winner", "duration": 4, "position": "full_screen"}
+      ]
+    },
+    {
+      "scene_number": 7,
+      "segments": [
+        {"type": "split_top", "duration": 3, "position": "top_half"},
+        {"type": "split_bottom", "duration": 3, "position": "bottom_half"},
+        {"type": "full_winner", "duration": 4, "position": "full_screen"}
+      ]
+    },
+    {
+      "scene_number": 8,
+      "segments": [
+        {"type": "split_top", "duration": 3, "position": "top_half"},
+        {"type": "split_bottom", "duration": 3, "position": "bottom_half"},
+        {"type": "full_winner", "duration": 4, "position": "full_screen"}
+      ]
+    }
+  ],
+  "output_settings": {
+    "width": 720,
+    "height": 1280,
+    "fps": 30,
+    "format": "mp4",
+    "codec": "libx264"
+  },
+  "audio": {
+    "enabled": false,
+    "source_url": null
+  },
+  "transitions": {
+    "enabled": true,
+    "type": "fade",
+    "duration": 0.5
+  },
+  "created_at": "2026-01-01T00:00:00Z",
+  "is_default": true
+}
+
