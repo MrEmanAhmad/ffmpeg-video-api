@@ -224,3 +224,108 @@ def validate_render_request(request_data: dict, template: dict) -> dict:
     
     return request_data
 
+
+def validate_audio_settings(audio_data: dict) -> dict:
+    """
+    Validate audio settings in render request
+    
+    Args:
+        audio_data: Audio configuration to validate
+        
+    Returns:
+        Validated audio data
+        
+    Raises:
+        ValidationError: If audio settings are invalid
+    """
+    if not isinstance(audio_data, dict):
+        raise ValidationError(
+            "Audio must be an object",
+            "INVALID_AUDIO"
+        )
+    
+    # Validate URL if provided
+    url = audio_data.get("url")
+    if url:
+        if not url.startswith("https://"):
+            raise ValidationError(
+                "Audio URL must be HTTPS",
+                "INVALID_AUDIO_URL",
+                {"url": url}
+            )
+    
+    # Validate volume (0.0 to 2.0)
+    volume = audio_data.get("volume")
+    if volume is not None:
+        if not isinstance(volume, (int, float)) or volume < 0 or volume > 2.0:
+            raise ValidationError(
+                "Volume must be between 0.0 and 2.0",
+                "INVALID_AUDIO_VOLUME",
+                {"volume": volume}
+            )
+    
+    # Validate fade_in (0 to 30 seconds)
+    fade_in = audio_data.get("fade_in")
+    if fade_in is not None:
+        if not isinstance(fade_in, (int, float)) or fade_in < 0 or fade_in > 30:
+            raise ValidationError(
+                "fade_in must be between 0 and 30 seconds",
+                "INVALID_AUDIO_FADE",
+                {"fade_in": fade_in}
+            )
+    
+    # Validate fade_out (0 to 30 seconds)
+    fade_out = audio_data.get("fade_out")
+    if fade_out is not None:
+        if not isinstance(fade_out, (int, float)) or fade_out < 0 or fade_out > 30:
+            raise ValidationError(
+                "fade_out must be between 0 and 30 seconds",
+                "INVALID_AUDIO_FADE",
+                {"fade_out": fade_out}
+            )
+    
+    return audio_data
+
+
+def validate_webhook_url(url: str) -> str:
+    """
+    Validate webhook URL
+    
+    Args:
+        url: Webhook URL to validate
+        
+    Returns:
+        Validated URL
+        
+    Raises:
+        ValidationError: If URL is invalid
+    """
+    if not url:
+        return url
+    
+    if not url.startswith("https://"):
+        raise ValidationError(
+            "Webhook URL must be HTTPS",
+            "INVALID_WEBHOOK_URL",
+            {"url": url}
+        )
+    
+    # Basic URL format check
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if not parsed.netloc:
+            raise ValidationError(
+                "Invalid webhook URL format",
+                "INVALID_WEBHOOK_URL",
+                {"url": url}
+            )
+    except Exception:
+        raise ValidationError(
+            "Invalid webhook URL format",
+            "INVALID_WEBHOOK_URL",
+            {"url": url}
+        )
+    
+    return url
+

@@ -24,12 +24,99 @@ class VideoServiceError(Exception):
         super().__init__(message)
 
 
+def send_webhook(webhook_url: str, payload: dict) -> bool:
+    """
+    Send webhook notification
+    
+    Args:
+        webhook_url: URL to POST to
+        payload: JSON payload to send
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not webhook_url:
+        return False
+    
+    for attempt in range(config.WEBHOOK_RETRIES):
+        try:
+            logger.info(f"Sending webhook to {webhook_url} (attempt {attempt + 1})")
+            response = requests.post(
+                webhook_url,
+                json=payload,
+                timeout=config.WEBHOOK_TIMEOUT,
+                headers={"Content-Type": "application/json"}
+            )
+            response.raise_for_status()
+            logger.info(f"Webhook sent successfully: {response.status_code}")
+            return True
+        except requests.RequestException as e:
+            logger.warning(f"Webhook attempt {attempt + 1} failed: {str(e)}")
+    
+    logger.error(f"All webhook attempts failed for {webhook_url}")
+    return False
+
+
 class VideoService:
     """Service for rendering videos from templates"""
     
     def __init__(self, temp_dir: Path = None):
         self.temp_dir = temp_dir or config.TEMP_DIR
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+    
+    def download_file(self, url: str, output_path: Path, timeout: int = None, 
+                      expected_type: str = None) -> Path:
+        """
+        Download a file from URL
+        
+        Args:
+            url: File URL
+            output_path: Where to save the file
+            timeout: Download timeout in seconds
+            expected_type: Expected content type prefix (e.g., 'image/', 'audio/')
+            
+        Returns:
+            Path to downloaded file
+            
+        Raises:
+            VideoServiceError: If download fails
+        """
+        timeout = timeout or config.IMAGE_DOWNLOAD_TIMEOUT
+        
+        try:
+            logger.info(f"Downloading: {url}")
+            
+            response = requests.get(url, timeout=timeout, stream=True)
+            response.raise_for_status()
+            
+            # Check content type if specified
+            if expected_type:
+                content_type = response.headers.get('content-type', '')
+                if not content_type.startswith(expected_type):
+                    raise VideoServiceError(
+                        f"URL does not return expected type {expected_type}: {content_type}",
+                        "INVALID_CONTENT_TYPE"
+                    )
+            
+            # Save to file
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            logger.info(f"Downloaded to: {output_path}")
+            return output_path
+            
+        except requests.Timeout:
+            raise VideoServiceError(
+                f"Download timed out after {timeout}s: {url}",
+                "DOWNLOAD_TIMEOUT"
+            )
+        except requests.RequestException as e:
+            raise VideoServiceError(
+                f"Failed to download: {str(e)}",
+                "DOWNLOAD_FAILED"
+            )
     
     def download_image(self, url: str, output_path: Path, timeout: int = None) -> Path:
         """
@@ -46,46 +133,31 @@ class VideoService:
         Raises:
             VideoServiceError: If download fails
         """
-        timeout = timeout or config.IMAGE_DOWNLOAD_TIMEOUT
-        
         try:
             # Validate URL
             validate_image_url(url)
-            
-            logger.info(f"Downloading image: {url}")
-            
-            response = requests.get(url, timeout=timeout, stream=True)
-            response.raise_for_status()
-            
-            # Check content type
-            content_type = response.headers.get('content-type', '')
-            if not content_type.startswith('image/'):
-                raise VideoServiceError(
-                    f"URL does not return an image: {content_type}",
-                    "INVALID_IMAGE"
-                )
-            
-            # Save to file
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(output_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            
-            logger.info(f"Downloaded image to: {output_path}")
-            return output_path
-            
+            return self.download_file(url, output_path, timeout, expected_type='image/')
         except ValidationError as e:
             raise VideoServiceError(e.message, e.code)
-        except requests.Timeout:
-            raise VideoServiceError(
-                f"Image download timed out after {timeout}s: {url}",
-                "IMAGE_DOWNLOAD_TIMEOUT"
-            )
-        except requests.RequestException as e:
-            raise VideoServiceError(
-                f"Failed to download image: {str(e)}",
-                "IMAGE_DOWNLOAD_FAILED"
-            )
+    
+    def download_audio(self, url: str, output_path: Path, timeout: int = None) -> Path:
+        """
+        Download an audio file from URL
+        
+        Args:
+            url: Audio URL
+            output_path: Where to save the audio
+            timeout: Download timeout in seconds
+            
+        Returns:
+            Path to downloaded audio
+            
+        Raises:
+            VideoServiceError: If download fails
+        """
+        # Audio can be various types, so we don't strictly check content-type
+        # FFmpeg will validate if it's actually audio
+        return self.download_file(url, output_path, timeout)
     
     def download_all_images(self, job: Job, template: dict) -> Dict[str, Dict[str, Path]]:
         """
@@ -298,8 +370,8 @@ class VideoService:
             
             all_segment_videos.extend(scene_videos)
             
-            # Update progress (rendering is 30-90% of work)
-            progress = 30 + int(((i + 1) / len(scenes)) * 60)
+            # Update progress (rendering is 30-80% of work)
+            progress = 30 + int(((i + 1) / len(scenes)) * 50)
             job_queue.update_job_progress(job.job_id, progress)
         
         # Concatenate all segments
@@ -320,25 +392,60 @@ class VideoService:
                 "FFMPEG_ERROR"
             )
         
+        job_queue.update_job_progress(job.job_id, 85)
+        
+        # Calculate total duration
+        total_duration = sum(
+            segment.get("duration", 0)
+            for scene in template.get("scenes", [])
+            for segment in scene.get("segments", [])
+        )
+        
         # Add audio if provided
-        audio_url = job.request_data.get("audio_url")
+        audio_data = job.request_data.get("audio", {})
+        audio_url = audio_data.get("url") if isinstance(audio_data, dict) else job.request_data.get("audio_url")
+        
         if audio_url:
             logger.info(f"Adding audio for job {job.job_id}")
-            final_with_audio = job_dir / f"final_{job.job_id}_audio.mp4"
             
-            cmd = builder.build_add_audio_command(
-                video_path=final_output,
-                audio_url=audio_url,
-                output_path=final_with_audio
-            )
+            # Download audio file
+            parsed = urlparse(audio_url)
+            audio_ext = Path(parsed.path).suffix or ".mp3"
+            audio_path = job_dir / f"audio{audio_ext}"
             
-            result = run_ffmpeg_command(cmd)
-            if result["success"]:
-                # Replace original with audio version
-                final_output.unlink()
-                final_with_audio.rename(final_output)
-            else:
-                logger.warning(f"Failed to add audio: {result['error']}")
+            try:
+                self.download_audio(audio_url, audio_path)
+                
+                # Get audio settings
+                volume = audio_data.get("volume", 1.0) if isinstance(audio_data, dict) else 1.0
+                fade_in = audio_data.get("fade_in", 0) if isinstance(audio_data, dict) else 0
+                fade_out = audio_data.get("fade_out", 0) if isinstance(audio_data, dict) else 0
+                loop = audio_data.get("loop", True) if isinstance(audio_data, dict) else True
+                
+                final_with_audio = job_dir / f"final_{job.job_id}_audio.mp4"
+                
+                cmd = builder.build_add_audio_command(
+                    video_path=final_output,
+                    audio_path=audio_path,
+                    output_path=final_with_audio,
+                    video_duration=total_duration,
+                    volume=volume,
+                    fade_in=fade_in,
+                    fade_out=fade_out,
+                    loop_audio=loop
+                )
+                
+                result = run_ffmpeg_command(cmd)
+                if result["success"]:
+                    # Replace original with audio version
+                    final_output.unlink()
+                    final_with_audio.rename(final_output)
+                    logger.info(f"Audio added successfully for job {job.job_id}")
+                else:
+                    logger.warning(f"Failed to add audio: {result['error']}")
+                    
+            except VideoServiceError as e:
+                logger.warning(f"Failed to download audio: {e.message}")
         
         # Clean up intermediate files
         self.cleanup_intermediate_files(job_dir, final_output)
@@ -413,6 +520,8 @@ def process_render_job(job: Job):
     """
     from services.template_service import template_service
     
+    webhook_url = job.request_data.get("webhook_url")
+    
     try:
         # Get template
         template = template_service.get_template(job.template_id)
@@ -444,13 +553,51 @@ def process_render_job(job: Job):
             duration_seconds=total_duration
         )
         
+        # Send webhook notification
+        if webhook_url:
+            send_webhook(webhook_url, {
+                "event": "job_completed",
+                "job_id": job.job_id,
+                "status": "completed",
+                "template_id": job.template_id,
+                "download_url": f"/download/{job.job_id}",
+                "file_size_mb": video_info.get("file_size_mb"),
+                "duration_seconds": total_duration
+            })
+        
     except VideoServiceError as e:
         logger.error(f"Video service error for job {job.job_id}: {e.message}")
         job_queue.mark_job_failed(job.job_id, e.message, e.code)
         
+        # Send failure webhook
+        if webhook_url:
+            send_webhook(webhook_url, {
+                "event": "job_failed",
+                "job_id": job.job_id,
+                "status": "failed",
+                "template_id": job.template_id,
+                "error": {
+                    "message": e.message,
+                    "code": e.code
+                }
+            })
+        
     except Exception as e:
         logger.error(f"Unexpected error for job {job.job_id}: {str(e)}")
         job_queue.mark_job_failed(job.job_id, str(e), "UNEXPECTED_ERROR")
+        
+        # Send failure webhook
+        if webhook_url:
+            send_webhook(webhook_url, {
+                "event": "job_failed",
+                "job_id": job.job_id,
+                "status": "failed",
+                "template_id": job.template_id,
+                "error": {
+                    "message": str(e),
+                    "code": "UNEXPECTED_ERROR"
+                }
+            })
 
 
 # Set the job processor
@@ -458,4 +605,3 @@ job_queue.set_processor(process_render_job)
 
 # Global video service instance
 video_service = VideoService()
-

@@ -1,0 +1,56 @@
+{
+  "template_id": "slideshow_simple",
+  "template_name": "slideshow_simple",
+  "description": "Simple slideshow - 5 full screen images, 4 seconds each",
+  "scenes": [
+    {
+      "scene_number": 1,
+      "segments": [
+        {"type": "image", "duration": 4, "position": "full_screen"}
+      ]
+    },
+    {
+      "scene_number": 2,
+      "segments": [
+        {"type": "image", "duration": 4, "position": "full_screen"}
+      ]
+    },
+    {
+      "scene_number": 3,
+      "segments": [
+        {"type": "image", "duration": 4, "position": "full_screen"}
+      ]
+    },
+    {
+      "scene_number": 4,
+      "segments": [
+        {"type": "image", "duration": 4, "position": "full_screen"}
+      ]
+    },
+    {
+      "scene_number": 5,
+      "segments": [
+        {"type": "image", "duration": 4, "position": "full_screen"}
+      ]
+    }
+  ],
+  "output_settings": {
+    "width": 720,
+    "height": 1280,
+    "fps": 30,
+    "format": "mp4",
+    "codec": "libx264"
+  },
+  "audio": {
+    "enabled": false,
+    "source_url": null
+  },
+  "transitions": {
+    "enabled": false,
+    "type": "none",
+    "duration": 0
+  },
+  "created_at": "2026-01-01T00:00:00Z",
+  "is_default": true
+}
+

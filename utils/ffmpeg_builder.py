@@ -246,31 +246,71 @@ class FFmpegBuilder:
     def build_add_audio_command(
         self,
         video_path: Path,
-        audio_url: str,
+        audio_path: Path,
         output_path: Path,
+        video_duration: float,
+        volume: float = 1.0,
+        fade_in: float = 0,
+        fade_out: float = 0,
         loop_audio: bool = True
     ) -> List[str]:
         """
-        Build FFmpeg command to add audio to video
+        Build FFmpeg command to add audio to video with effects
         
         Args:
             video_path: Path to video file
-            audio_url: URL or path to audio file
+            audio_path: Path to downloaded audio file
             output_path: Output video path
+            video_duration: Duration of video in seconds
+            volume: Audio volume (0.0 to 2.0)
+            fade_in: Fade in duration in seconds
+            fade_out: Fade out duration in seconds
             loop_audio: Whether to loop audio to match video length
             
         Returns:
             FFmpeg command as list of arguments
         """
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(video_path),
-            "-i", audio_url,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-shortest",  # End when shortest stream ends
-            str(output_path)
-        ]
+        # Build audio filter chain
+        audio_filters = []
+        
+        # Volume adjustment
+        if volume != 1.0:
+            audio_filters.append(f"volume={volume}")
+        
+        # Fade in
+        if fade_in > 0:
+            audio_filters.append(f"afade=t=in:st=0:d={fade_in}")
+        
+        # Fade out (needs to know when to start)
+        if fade_out > 0:
+            fade_out_start = max(0, video_duration - fade_out)
+            audio_filters.append(f"afade=t=out:st={fade_out_start}:d={fade_out}")
+        
+        # Build command
+        cmd = ["ffmpeg", "-y"]
+        
+        # Input video
+        cmd.extend(["-i", str(video_path)])
+        
+        # Input audio (with loop if needed)
+        if loop_audio:
+            cmd.extend(["-stream_loop", "-1"])
+        cmd.extend(["-i", str(audio_path)])
+        
+        # Video codec (copy to avoid re-encoding)
+        cmd.extend(["-c:v", "copy"])
+        
+        # Audio codec and filters
+        cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+        
+        if audio_filters:
+            cmd.extend(["-af", ",".join(audio_filters)])
+        
+        # Match video duration
+        cmd.extend(["-t", str(video_duration)])
+        
+        # Output
+        cmd.append(str(output_path))
         
         return cmd
 

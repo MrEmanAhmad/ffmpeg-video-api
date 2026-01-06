@@ -30,6 +30,15 @@ VIDEO_RETENTION_HOURS = int(os.getenv("VIDEO_RETENTION_HOURS", "24"))
 IMAGE_DOWNLOAD_TIMEOUT = int(os.getenv("IMAGE_DOWNLOAD_TIMEOUT", "30"))  # seconds
 ALLOWED_DOMAINS = [d.strip() for d in os.getenv("ALLOWED_DOMAINS", "").split(",") if d.strip()]
 
+# API Key Authentication
+# Comma-separated list of valid API keys (empty = no auth required)
+API_KEYS = [k.strip() for k in os.getenv("API_KEYS", "").split(",") if k.strip()]
+AUTH_ENABLED = len(API_KEYS) > 0
+
+# Webhook settings
+WEBHOOK_TIMEOUT = int(os.getenv("WEBHOOK_TIMEOUT", "10"))  # seconds
+WEBHOOK_RETRIES = int(os.getenv("WEBHOOK_RETRIES", "3"))
+
 # Default video output settings
 DEFAULT_OUTPUT_SETTINGS = {
     "width": 720,
@@ -37,5 +46,13 @@ DEFAULT_OUTPUT_SETTINGS = {
     "fps": 30,
     "format": "mp4",
     "codec": "libx264"
+}
+
+# Default audio settings
+DEFAULT_AUDIO_SETTINGS = {
+    "volume": 1.0,
+    "fade_in": 0,
+    "fade_out": 0,
+    "loop": True
 }
 

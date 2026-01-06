@@ -252,6 +252,55 @@ class TemplateService:
         self._save_template_file(template)
         
         return template
+    
+    def clone_template(self, template_id: str, new_name: str) -> Optional[dict]:
+        """
+        Clone an existing template with a new name
+        
+        Args:
+            template_id: Template ID to clone
+            new_name: Name for the new template
+            
+        Returns:
+            Created template info or None if source not found
+        """
+        # Load source template
+        source = self._load_template_file(template_id)
+        
+        if not source:
+            return None
+        
+        # Check if new name already exists
+        if self._load_template_file(new_name):
+            raise ValueError(f"Template already exists: {new_name}")
+        
+        # Validate new name
+        validate_template_name(new_name)
+        
+        # Create clone
+        now = datetime.utcnow().isoformat() + "Z"
+        
+        clone = {
+            **source,
+            "template_id": new_name,
+            "template_name": new_name,
+            "description": f"Clone of {template_id}: {source.get('description', '')}",
+            "created_at": now,
+            "updated_at": now,
+            "is_default": False,
+            "cloned_from": template_id
+        }
+        
+        # Save clone
+        self._save_template_file(clone)
+        
+        return {
+            "status": "success",
+            "template_id": new_name,
+            "template_name": new_name,
+            "cloned_from": template_id,
+            "created_at": now
+        }
 
 
 # Global template service instance
