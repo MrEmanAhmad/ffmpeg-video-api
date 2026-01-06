@@ -785,31 +785,377 @@ All errors follow this format:
 
 ---
 
-## n8n Integration Example
+## n8n Integration Guide
 
-### Workflow Steps:
+This section provides a complete guide on integrating the FFmpeg Video API with n8n workflows.
 
-1. **HTTP Request Node** - Submit render job:
-   - Method: POST
-   - URL: `https://your-api.onrender.com/render-video`
-   - Headers: `X-API-Key: your-key`
-   - Body: JSON with template_id, images, and webhook_url
+### Prerequisites
 
-2. **Option A: Webhook Trigger**
-   - Use n8n webhook node to receive completion notification
-   - No polling needed!
+1. Your API deployed on Render (e.g., `https://ffmpeg-video-api-5qmd.onrender.com`)
+2. API key configured in Render environment variables
+3. n8n instance (cloud or self-hosted)
 
-3. **Option B: Poll Status**
-   - Wait Node (60 seconds)
-   - HTTP Request to `/status/{job_id}`
-   - IF Node to check if completed
-   - Loop back to Wait if still processing
+### Setting Up Authentication
 
-4. **HTTP Request Node** - Download video:
-   - Method: GET
-   - URL: `https://your-api.onrender.com/download/{job_id}`
+#### Step 1: Create API Key in Render
 
-5. **Google Drive Node** - Upload video
+1. Go to your Render dashboard
+2. Select your `ffmpeg-video-api` service
+3. Go to **Environment** tab
+4. Add environment variable:
+   - **Key:** `API_KEYS`
+   - **Value:** `your-secret-key-here` (or comma-separated for multiple keys)
+5. Save and wait for redeploy
+
+#### Step 2: Configure n8n HTTP Request Headers
+
+In every HTTP Request node, add these headers:
+
+| Header Name | Header Value |
+|-------------|--------------|
+| `X-API-Key` | `your-secret-key-here` |
+| `Content-Type` | `application/json` |
+
+**Important:** 
+- Header name must be exactly `X-API-Key` (not `API_KEYS` or `Authorization`)
+- Do NOT add `Bearer ` prefix - just the key itself
+
+---
+
+### Complete n8n Workflow Example
+
+#### Workflow Overview
+
+```
+[Google Sheets] → [Code Node] → [HTTP Request: Render] → [Wait] → [HTTP Request: Status] → [Switch] → [HTTP Request: Download] → [Google Drive]
+```
+
+#### Node 1: Get Data from Google Sheets
+
+Fetch your image URLs from a spreadsheet with columns like:
+- `1.1`, `1.2`, `1.3` (scene 1 images)
+- `2.1`, `2.2`, `2.3` (scene 2 images)
+- etc.
+
+#### Node 2: Code Node (Build Request Body)
+
+**This is critical!** n8n's JSON body doesn't handle expressions well. Use a Code node to build the request.
+
+**Code (JavaScript):**
+```javascript
+const item = $input.first().json;
+
+return [{
+  json: {
+    template_id: "fight_video_standard",
+    images: {
+      scene_1: {
+        split_top: item['1.1'],
+        split_bottom: item['1.2'],
+        full_winner: item['1.3']
+      },
+      scene_2: {
+        split_top: item['2.1'],
+        split_bottom: item['2.2'],
+        full_winner: item['2.3']
+      },
+      scene_3: {
+        split_top: item['3.1'],
+        split_bottom: item['3.2'],
+        full_winner: item['3.3']
+      },
+      scene_4: {
+        split_top: item['4.1'],
+        split_bottom: item['4.2'],
+        full_winner: item['4.3']
+      },
+      scene_5: {
+        split_top: item['5.1'],
+        split_bottom: item['5.2'],
+        full_winner: item['5.3']
+      },
+      scene_6: {
+        split_top: item['6.1'],
+        split_bottom: item['6.2'],
+        full_winner: item['6.3']
+      },
+      scene_7: {
+        split_top: item['7.1'],
+        split_bottom: item['7.2'],
+        full_winner: item['7.3']
+      },
+      scene_8: {
+        split_top: item['8.1'],
+        split_bottom: item['8.2'],
+        full_winner: item['8.3']
+      }
+    },
+    audio: {
+      url: "https://drive.google.com/uc?export=download&id=YOUR_AUDIO_FILE_ID",
+      volume: 0.8,
+      fade_in: 1,
+      fade_out: 3,
+      loop: true
+    }
+  }
+}];
+```
+
+#### Node 3: HTTP Request - Submit Render Job
+
+| Setting | Value |
+|---------|-------|
+| Method | `POST` |
+| URL | `https://ffmpeg-video-api-5qmd.onrender.com/render-video` |
+| Authentication | None |
+| Headers | `X-API-Key`: `your-key`, `Content-Type`: `application/json` |
+| Body Content Type | JSON |
+| Specify Body | Using JSON |
+| JSON | `={{ $json }}` |
+
+**Response:**
+```json
+{
+  "status": "processing",
+  "job_id": "abc123-def456",
+  "estimated_time_seconds": 80,
+  "check_status_url": "/status/abc123-def456"
+}
+```
+
+#### Node 4: Wait Node
+
+- **Wait Time:** 90-120 seconds (adjust based on video length)
+- For 80-second video, wait at least 90 seconds
+
+#### Node 5: HTTP Request - Check Status
+
+| Setting | Value |
+|---------|-------|
+| Method | `GET` |
+| URL | `https://ffmpeg-video-api-5qmd.onrender.com/status/{{ $json.job_id }}` |
+| Headers | `X-API-Key`: `your-key` |
+
+#### Node 6: Switch Node (Check if Completed)
+
+- **Condition 1:** `{{ $json.status }}` equals `completed` → Continue to download
+- **Condition 2:** `{{ $json.status }}` equals `failed` → Handle error
+- **Default:** Loop back to Wait node
+
+#### Node 7: HTTP Request - Download Video
+
+| Setting | Value |
+|---------|-------|
+| Method | `GET` |
+| URL | `https://ffmpeg-video-api-5qmd.onrender.com/download/{{ $json.job_id }}` |
+| Headers | `X-API-Key`: `your-key` |
+| Response Format | File |
+
+#### Node 8: Google Drive - Upload
+
+- Connect your Google Drive credentials
+- Upload the binary file from previous node
+
+---
+
+### Alternative: Using Webhooks (No Polling)
+
+Instead of polling with Wait nodes, use webhooks for instant notification.
+
+#### Setup Webhook Workflow
+
+**Workflow 1: Submit Job**
+```
+[Trigger] → [Code Node] → [HTTP Request with webhook_url]
+```
+
+**Workflow 2: Receive Completion**
+```
+[Webhook Trigger] → [HTTP Request: Download] → [Google Drive]
+```
+
+#### Code Node with Webhook:
+```javascript
+const item = $input.first().json;
+
+return [{
+  json: {
+    template_id: "fight_video_standard",
+    images: {
+      // ... your images
+    },
+    webhook_url: "https://your-n8n-instance.com/webhook/video-complete"
+  }
+}];
+```
+
+#### Webhook Trigger Node:
+- **HTTP Method:** POST
+- **Path:** `/webhook/video-complete`
+
+The API will POST this when complete:
+```json
+{
+  "event": "job_completed",
+  "job_id": "abc123",
+  "status": "completed",
+  "download_url": "/download/abc123",
+  "file_size_mb": 12.5,
+  "duration_seconds": 80
+}
+```
+
+---
+
+### Common n8n Issues & Solutions
+
+#### Issue 1: "Image URL is required" Error
+
+**Cause:** Expressions not evaluating in JSON body.
+
+**Solution:** Use a Code node to build the JSON, then use `={{ $json }}` in HTTP Request body.
+
+#### Issue 2: "Only HTTPS URLs are allowed" with `=https://...`
+
+**Cause:** The `=` prefix from expressions is being included in the URL.
+
+**Solution:** Don't use `={{ }}` syntax in JSON editor. Use Code node instead.
+
+#### Issue 3: Empty image URLs
+
+**Cause:** Processing wrong item in array.
+
+**Solution:** Use `$input.first().json` in Code node to get the first item.
+
+#### Issue 4: 401 Unauthorized
+
+**Cause:** Wrong header name or missing API key.
+
+**Solution:** 
+- Header must be `X-API-Key` (not `API_KEYS`)
+- Value should be just the key (no `Bearer ` prefix)
+- Key must match what's in Render environment variables
+
+#### Issue 5: Audio not working
+
+**Cause:** Google Drive share links don't work directly.
+
+**Solution:** Convert share link to direct download:
+- Share link: `https://drive.google.com/file/d/FILE_ID/view?usp=sharing`
+- Direct link: `https://drive.google.com/uc?export=download&id=FILE_ID`
+
+---
+
+### n8n Code Templates
+
+#### Template: 4-Scene Fight Video
+```javascript
+const item = $input.first().json;
+
+return [{
+  json: {
+    template_id: "fight_video_4_scenes",
+    images: {
+      scene_1: {
+        split_top: item['1.1'],
+        split_bottom: item['1.2'],
+        full_winner: item['1.3']
+      },
+      scene_2: {
+        split_top: item['2.1'],
+        split_bottom: item['2.2'],
+        full_winner: item['2.3']
+      },
+      scene_3: {
+        split_top: item['3.1'],
+        split_bottom: item['3.2'],
+        full_winner: item['3.3']
+      },
+      scene_4: {
+        split_top: item['4.1'],
+        split_bottom: item['4.2'],
+        full_winner: item['4.3']
+      }
+    }
+  }
+}];
+```
+
+#### Template: Simple Slideshow
+```javascript
+const item = $input.first().json;
+
+return [{
+  json: {
+    template_id: "slideshow_simple",
+    images: {
+      scene_1: { image: item['image1'] },
+      scene_2: { image: item['image2'] },
+      scene_3: { image: item['image3'] },
+      scene_4: { image: item['image4'] },
+      scene_5: { image: item['image5'] }
+    },
+    audio: {
+      url: item['audio_url'],
+      volume: 0.7
+    }
+  }
+}];
+```
+
+#### Template: With Dynamic Audio from Sheet
+```javascript
+const item = $input.first().json;
+
+const requestBody = {
+  template_id: "fight_video_standard",
+  images: {
+    scene_1: {
+      split_top: item['1.1'],
+      split_bottom: item['1.2'],
+      full_winner: item['1.3']
+    },
+    // ... more scenes
+  }
+};
+
+// Add audio if URL provided
+if (item['audio_url']) {
+  requestBody.audio = {
+    url: item['audio_url'],
+    volume: parseFloat(item['audio_volume'] || '0.8'),
+    fade_in: parseFloat(item['fade_in'] || '1'),
+    fade_out: parseFloat(item['fade_out'] || '3'),
+    loop: true
+  };
+}
+
+return [{ json: requestBody }];
+```
+
+---
+
+### Google Sheets Setup
+
+Recommended column structure for 8-scene fight video:
+
+| Column | Description | Example |
+|--------|-------------|---------|
+| `row_number` | Row identifier | 2 |
+| `Main Character` | Character name | Ape |
+| `Opponent` | Opponent name | Big Cats |
+| `Status` | Processing status | To Do |
+| `Final Video` | Output video URL | (filled after upload) |
+| `1.1` | Scene 1, Top image | https://img.theapi.app/... |
+| `1.2` | Scene 1, Bottom image | https://img.theapi.app/... |
+| `1.3` | Scene 1, Winner image | https://img.theapi.app/... |
+| `2.1` | Scene 2, Top image | https://img.theapi.app/... |
+| `2.2` | Scene 2, Bottom image | https://img.theapi.app/... |
+| `2.3` | Scene 2, Winner image | https://img.theapi.app/... |
+| ... | Continue for all 8 scenes | ... |
+| `8.1` | Scene 8, Top image | https://img.theapi.app/... |
+| `8.2` | Scene 8, Bottom image | https://img.theapi.app/... |
+| `8.3` | Scene 8, Winner image | https://img.theapi.app/... |
 
 ---
 
