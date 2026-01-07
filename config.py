@@ -40,8 +40,10 @@ WEBHOOK_TIMEOUT = int(os.getenv("WEBHOOK_TIMEOUT", "10"))  # seconds
 WEBHOOK_RETRIES = int(os.getenv("WEBHOOK_RETRIES", "3"))
 
 # Parallel processing settings (for speed optimization)
-PARALLEL_DOWNLOADS = int(os.getenv("PARALLEL_DOWNLOADS", "8"))  # Max concurrent image downloads
-PARALLEL_SCENES = int(os.getenv("PARALLEL_SCENES", "4"))  # Max concurrent scene rendering
+# NOTE: Free tier servers (Render.com) have limited CPU - use conservative values
+# Paid tiers can increase these for faster processing
+PARALLEL_DOWNLOADS = int(os.getenv("PARALLEL_DOWNLOADS", "4"))  # Max concurrent image downloads
+PARALLEL_SCENES = int(os.getenv("PARALLEL_SCENES", "1"))  # Max concurrent scene rendering (1 for free tier!)
 
 # FFmpeg encoding settings
 FFMPEG_PRESET = os.getenv("FFMPEG_PRESET", "ultrafast")  # ultrafast, superfast, veryfast, faster, fast, medium
