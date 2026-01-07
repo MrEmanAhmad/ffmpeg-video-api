@@ -871,21 +871,19 @@ def get_job_status(job_id):
 
 
 @app.route('/download/<job_id>', methods=['GET'])
-@require_api_key
 def download_video(job_id):
     """
-    Download rendered video
+    Download rendered video (PUBLIC - no API key required)
     ---
     tags:
       - Rendering
-    security:
-      - ApiKeyAuth: []
+    security: []
     parameters:
       - name: job_id
         in: path
         type: string
         required: true
-        description: Job ID of completed render
+        description: Job ID of completed render (acts as access token)
     produces:
       - video/mp4
     responses:
